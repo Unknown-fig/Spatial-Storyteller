@@ -1,484 +1,551 @@
 // ============================================================
-//  Procedural sample scenes — no image files, no external assets
-//  All drawn on OffscreenCanvas (1024x768) using 2D Canvas API
+//  Procedural sample scenes � high contrast, flat-shaded,
+//  dark outlines, distinct depths, subtle depth cues (haze, shadows, scale),
+//  and strictly asymmetric to make flipping/mirroring bugs obvious.
 // ============================================================
 
 export type SampleSceneId = 'streetscape' | 'stilllife' | 'landscape';
 
 export const SAMPLE_SCENES: { id: SampleSceneId; label: string; desc: string }[] = [
-  { id: 'streetscape', label: 'City Street',    desc: 'Architectural streetscape with layered buildings' },
-  { id: 'stilllife',   label: 'Desk Still Life', desc: 'Geometric objects at distinct depths' },
-  { id: 'landscape',   label: 'Landscape',       desc: 'Mountain, forest, river, meadow layers' },
+  { id: 'streetscape', label: 'City Street', desc: 'Asymmetric street with shops, hydrants, signs and layered buildings' },
+  { id: 'stilllife',   label: 'Desk Still Life', desc: 'Geometric solids, lamp, mug, books and potted plant' },
+  { id: 'landscape',   label: 'Alpine Valley', desc: 'Mountain peak, cabin, stone bridge, river, and ancient oak' },
 ];
 
 export async function renderScene(id: SampleSceneId): Promise<{ canvas: HTMLCanvasElement; bitmap: ImageBitmap }> {
-  const W = 1024, H = 768;
+  const W = 1024;
+  const H = 768;
   const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
+  canvas.width = W;
+  canvas.height = H;
   const ctx = canvas.getContext('2d')!;
 
-  if (id === 'streetscape')  drawStreetscape(ctx, W, H);
-  else if (id === 'stilllife') drawStillLife(ctx, W, H);
-  else                        drawLandscape(ctx, W, H);
+  if (id === 'streetscape') {
+    drawStreetscape(ctx, W, H);
+  } else if (id === 'stilllife') {
+    drawStillLife(ctx, W, H);
+  } else {
+    drawLandscape(ctx, W, H);
+  }
 
   const bitmap = await createImageBitmap(canvas);
   return { canvas, bitmap };
 }
 
-// ── Scene 1: Architectural Streetscape ───────────────────────
+// -- Helpers for High-Contrast Outlines and Depth Cues ---------
+function strokeShape(ctx: CanvasRenderingContext2D, lineWidth = 2.5, strokeColor = '#0F172A') {
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+}
+
+function drawShadow(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, alpha = 0.35) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(15, 23, 42, ${alpha})`;
+  ctx.fill();
+  ctx.restore();
+}
+
+// -- Scene 1: Architectural City Streetscape (Asymmetric) ------
 function drawStreetscape(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  // Sky gradient
-  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.55);
-  sky.addColorStop(0, '#1a2744');
-  sky.addColorStop(1, '#3d6fa8');
+  // 1. Sky & Atmospheric Haze (Far, Depth ~ 0.05)
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.6);
+  sky.addColorStop(0, '#1E293B');
+  sky.addColorStop(1, '#475569');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, H);
 
-  // Sun/moon halo
+  // Distant pale moon (Upper Left)
   ctx.beginPath();
-  ctx.arc(W * 0.75, H * 0.12, 60, 0, Math.PI * 2);
-  const halo = ctx.createRadialGradient(W * 0.75, H * 0.12, 10, W * 0.75, H * 0.12, 60);
-  halo.addColorStop(0, 'rgba(255,240,180,0.9)');
-  halo.addColorStop(1, 'rgba(255,180,80,0)');
-  ctx.fillStyle = halo;
+  ctx.arc(160, 100, 45, 0, Math.PI * 2);
+  ctx.fillStyle = '#FEF08A';
   ctx.fill();
+  strokeShape(ctx, 2, '#CA8A04');
 
-  // Far background buildings (darkest / most receded)
-  const farBuildings = [
-    { x: 0,   w: 90,  h: 220, color: '#1c2a3e' },
-    { x: 80,  w: 60,  h: 180, color: '#1e2d44' },
-    { x: 130, w: 110, h: 260, color: '#1a2840' },
-    { x: 230, w: 80,  h: 200, color: '#1c2b42' },
-    { x: 300, w: 130, h: 300, color: '#1d2d45' },
-    { x: 420, w: 90,  h: 240, color: '#1b2a40' },
-    { x: 500, w: 70,  h: 190, color: '#1e2f46' },
-    { x: 560, w: 150, h: 280, color: '#1c2c43' },
-    { x: 700, w: 100, h: 220, color: '#1a2840' },
-    { x: 790, w: 80,  h: 260, color: '#1d2d45' },
-    { x: 860, w: 164, h: 210, color: '#1b2b41' },
-  ];
-  for (const b of farBuildings) {
-    ctx.fillStyle = b.color;
-    ctx.fillRect(b.x, H * 0.55 - b.h, b.w, b.h);
-    // Windows
-    for (let wy = H * 0.55 - b.h + 10; wy < H * 0.55 - 10; wy += 20) {
-      for (let wx = b.x + 6; wx < b.x + b.w - 6; wx += 14) {
-        if (Math.random() > 0.4) {
-          ctx.fillStyle = `rgba(255,230,120,${0.3 + Math.random() * 0.5})`;
-          ctx.fillRect(wx, wy, 6, 10);
-        }
-      }
-    }
+  // 2. Far Distant Buildings (Asymmetric, Left-Heavy, Depth ~ 0.2)
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(40, 140, 110, 320); // Tall skyscraper left
+  ctx.strokeRect(40, 140, 110, 320);
+  ctx.fillRect(160, 200, 80, 260);
+  ctx.strokeRect(160, 200, 80, 260);
+
+  // Spire on tall skyscraper
+  ctx.beginPath();
+  ctx.moveTo(95, 140);
+  ctx.lineTo(95, 70);
+  ctx.stroke();
+
+  // Low mid buildings on Right
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(620, 250, 140, 210);
+  ctx.strokeRect(620, 250, 140, 210);
+  ctx.fillRect(780, 220, 120, 240);
+  ctx.strokeRect(780, 220, 120, 240);
+
+  // 3. Mid-Distance Clock Tower (Left-Center, Depth ~ 0.4)
+  ctx.fillStyle = '#78350F'; // Dark amber brick
+  ctx.fillRect(260, 160, 120, 300);
+  strokeShape(ctx);
+  // Clock face
+  ctx.beginPath();
+  ctx.arc(320, 220, 32, 0, Math.PI * 2);
+  ctx.fillStyle = '#FEF3C7';
+  ctx.fill();
+  strokeShape(ctx, 2);
+  // Clock hands
+  ctx.beginPath();
+  ctx.moveTo(320, 220);
+  ctx.lineTo(320, 200);
+  ctx.moveTo(320, 220);
+  ctx.lineTo(335, 220);
+  ctx.stroke();
+
+  // 4. Bakery Storefront with Awning (Center-Right, Depth ~ 0.5)
+  ctx.fillStyle = '#CBD5E1';
+  ctx.fillRect(410, 240, 200, 220);
+  strokeShape(ctx);
+  // Sign "BAKERY"
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(430, 250, 160, 32);
+  ctx.fillStyle = '#F8FAFC';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('BAKERY', 475, 272);
+  // Striped Awning
+  for (let i = 0; i < 8; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#EF4444' : '#FFFFFF';
+    ctx.fillRect(410 + i * 25, 285, 25, 30);
+    ctx.strokeRect(410 + i * 25, 285, 25, 30);
   }
 
-  // Mid-distance apartment blocks (medium depth)
-  const midBuildings = [
-    { x: -10, w: 140, h: 310, color: '#2a3f5c' },
-    { x: 120,  w: 100, h: 270, color: '#2d4360' },
-    { x: 210,  w: 170, h: 340, color: '#283d58' },
-    { x: 370,  w: 90,  h: 290, color: '#2b4060' },
-    { x: 450,  w: 160, h: 320, color: '#2a3f5c' },
-    { x: 600,  w: 120, h: 300, color: '#2d4262' },
-    { x: 710,  w: 170, h: 350, color: '#283d58' },
-    { x: 870,  w: 164, h: 290, color: '#2c4160' },
-  ];
-  for (const b of midBuildings) {
-    ctx.fillStyle = b.color;
-    ctx.fillRect(b.x, H * 0.6 - b.h, b.w, b.h);
-    // Window rows
-    for (let wy = H * 0.6 - b.h + 15; wy < H * 0.6 - 15; wy += 24) {
-      for (let wx = b.x + 10; wx < b.x + b.w - 10; wx += 18) {
-        ctx.fillStyle = Math.random() > 0.3
-          ? `rgba(255,220,100,${0.5 + Math.random() * 0.4})`
-          : 'rgba(50,70,100,0.6)';
-        ctx.fillRect(wx, wy, 8, 14);
-      }
-    }
-  }
-
-  // Ground / road
-  const road = ctx.createLinearGradient(0, H * 0.6, 0, H);
-  road.addColorStop(0, '#1a1f28');
-  road.addColorStop(1, '#0d1018');
-  ctx.fillStyle = road;
-  ctx.fillRect(0, H * 0.6, W, H * 0.4);
-
-  // Road markings (perspective lines)
-  ctx.strokeStyle = 'rgba(255,255,180,0.6)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([30, 20]);
-  ctx.beginPath(); ctx.moveTo(W * 0.5, H * 0.6); ctx.lineTo(W * 0.1, H); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(W * 0.5, H * 0.6); ctx.lineTo(W * 0.9, H); ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Pavement
-  ctx.fillStyle = '#252d3a';
-  ctx.fillRect(0, H * 0.6, W, 20);
-  ctx.fillRect(0, H - 20, W, 20);
-
-  // Foreground: lamppost (left)
-  ctx.fillStyle = '#8a9bb0';
-  ctx.fillRect(W * 0.08 - 4, H * 0.42, 8, H * 0.58);
-  ctx.fillStyle = 'rgba(255,230,100,0.9)';
-  ctx.beginPath(); ctx.arc(W * 0.08, H * 0.42, 18, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#a0b0c0';
-  ctx.fillRect(W * 0.065, H * 0.42 - 5, 60, 10);
-
-  // Foreground: fire hydrant (right of lamppost)
-  ctx.fillStyle = '#c0392b';
-  ctx.fillRect(W * 0.14, H * 0.76, 20, 28);
-  ctx.fillRect(W * 0.137, H * 0.74, 26, 10);
-  ctx.fillRect(W * 0.14, H * 0.80, 8, 6);
-  ctx.fillRect(W * 0.168, H * 0.80, 8, 6);
-
-  // Foreground: mailbox (far right)
-  ctx.fillStyle = '#2255aa';
-  ctx.fillRect(W * 0.84, H * 0.72, 48, 36);
-  ctx.fillStyle = '#1a44aa';
-  ctx.beginPath(); ctx.ellipse(W * 0.864, H * 0.72, 24, 12, 0, Math.PI, 0); ctx.fill();
-  ctx.fillStyle = '#8a9bb0';
-  ctx.fillRect(W * 0.862, H * 0.73, 4, 50);
-
-  // Foreground: parked car (bottom-right)
-  ctx.fillStyle = '#c0392b';
+  // Pavement / Road Plane with Perspective Line
+  ctx.fillStyle = '#64748B';
+  ctx.fillRect(0, 460, W, H - 460);
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(0, 520, W, H - 520);
+  ctx.strokeStyle = '#0F172A';
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.roundRect(W * 0.6, H * 0.78, 220, 70, 8);
+  ctx.moveTo(0, 520);
+  ctx.lineTo(W, 520);
+  ctx.stroke();
+
+  // 5. Deciduous Green Tree (Right, Depth ~ 0.6)
+  drawShadow(ctx, 720, 560, 50, 14);
+  // Trunk
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(705, 360, 30, 180);
+  strokeShape(ctx);
+  // Foliage
+  ctx.beginPath();
+  ctx.arc(720, 340, 75, 0, Math.PI * 2);
+  ctx.fillStyle = '#16A34A';
   ctx.fill();
-  ctx.fillStyle = '#a93226';
-  ctx.fillRect(W * 0.6, H * 0.82, 220, 26);
-  ctx.fillStyle = 'rgba(140,210,255,0.6)';
-  ctx.fillRect(W * 0.63, H * 0.79, 60, 25);
-  ctx.fillRect(W * 0.70, H * 0.79, 60, 25);
-  ctx.fillStyle = '#1a1a1a';
-  ctx.beginPath(); ctx.arc(W * 0.636, H * 0.86, 16, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(W * 0.78,  H * 0.86, 16, 0, Math.PI * 2); ctx.fill();
+  strokeShape(ctx);
+
+  // 6. Red Park Bench (Right of Tree, Depth ~ 0.7)
+  drawShadow(ctx, 840, 580, 55, 12);
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(790, 510, 100, 20);
+  ctx.fillRect(790, 535, 100, 14);
+  ctx.strokeRect(790, 510, 100, 20);
+  ctx.strokeRect(790, 535, 100, 14);
+  // Legs
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(800, 549, 10, 28);
+  ctx.fillRect(870, 549, 10, 28);
+
+  // 7. Blue Mailbox (Foreground Left, Depth ~ 0.8)
+  drawShadow(ctx, 220, 670, 45, 16);
+  ctx.fillStyle = '#2563EB';
+  ctx.beginPath();
+  ctx.roundRect(180, 540, 80, 110, [35, 35, 6, 6]);
+  ctx.fill();
+  strokeShape(ctx, 3);
+  // Mail slot
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(195, 570, 50, 10);
+
+  // 8. Yellow Fire Hydrant (Foreground Center-Left, Depth ~ 0.9)
+  drawShadow(ctx, 360, 720, 40, 15);
+  ctx.fillStyle = '#EAB308';
+  // Base & body
+  ctx.fillRect(330, 620, 60, 90);
+  strokeShape(ctx, 3);
+  // Cap
+  ctx.beginPath();
+  ctx.arc(360, 620, 30, Math.PI, 0);
+  ctx.fillStyle = '#CA8A04';
+  ctx.fill();
+  strokeShape(ctx, 3);
+  // Side nozzles
+  ctx.fillStyle = '#EAB308';
+  ctx.fillRect(315, 645, 15, 20);
+  ctx.strokeRect(315, 645, 15, 20);
+  ctx.fillRect(390, 645, 15, 20);
+  ctx.strokeRect(390, 645, 15, 20);
+
+  // 9. Street Sign Post reading "1ST AVE" (Foreground Far Left, Depth ~ 0.95)
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillRect(60, 400, 14, 340);
+  strokeShape(ctx, 2.5);
+  // Sign plate
+  ctx.fillStyle = '#059669'; // Emerald street sign
+  ctx.fillRect(30, 420, 140, 36);
+  strokeShape(ctx, 2.5);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 15px monospace';
+  ctx.fillText('1ST AVE', 58, 444);
 }
 
-// ── Scene 2: Geometric Still-Life Desk ───────────────────────
+// -- Scene 2: Geometric Desk Still Life (Asymmetric) -----------
 function drawStillLife(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  // Background wall
-  const wall = ctx.createLinearGradient(0, 0, 0, H * 0.65);
-  wall.addColorStop(0, '#1a1520');
-  wall.addColorStop(1, '#251d30');
-  ctx.fillStyle = wall;
-  ctx.fillRect(0, 0, W, H * 0.65);
+  // 1. Studio Backdrop (Depth ~ 0.1)
+  const bg = ctx.createLinearGradient(0, 0, W, H * 0.7);
+  bg.addColorStop(0, '#1E1E2E');
+  bg.addColorStop(1, '#313244');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
 
-  // Subtle wall texture lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-  ctx.lineWidth = 1;
-  for (let y = 0; y < H * 0.65; y += 40) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  // Notice board on far right wall (Depth ~ 0.15)
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(720, 60, 240, 160);
+  strokeShape(ctx, 3);
+  // Pinned note "MEMO"
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(760, 90, 100, 80);
+  strokeShape(ctx, 1.5);
+  ctx.fillStyle = '#0F172A';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('STUDIO', 780, 135);
+
+  // Dark polished desk surface (Depth ~ 0.4 to 1.0)
+  ctx.fillStyle = '#181825';
+  ctx.fillRect(0, 380, W, H - 380);
+  ctx.strokeStyle = '#45475A';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 380);
+  ctx.lineTo(W, 380);
+  ctx.stroke();
+
+  // 2. Terracotta Potted Plant (Far Left, Depth ~ 0.35)
+  drawShadow(ctx, 130, 470, 50, 16);
+  // Pot
+  ctx.fillStyle = '#EA580C';
+  ctx.beginPath();
+  ctx.moveTo(90, 380);
+  ctx.lineTo(170, 380);
+  ctx.lineTo(155, 460);
+  ctx.lineTo(105, 460);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx);
+  // Cactus ribbed lobes
+  ctx.fillStyle = '#15803D';
+  ctx.beginPath();
+  ctx.ellipse(130, 320, 35, 60, 0, 0, Math.PI * 2);
+  ctx.fill();
+  strokeShape(ctx);
+  ctx.beginPath();
+  ctx.ellipse(100, 330, 18, 30, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+  strokeShape(ctx);
+
+  // 3. Wooden Triangular Ruler (Left-Center, Depth ~ 0.5)
+  ctx.fillStyle = '#F59E0B';
+  ctx.beginPath();
+  ctx.moveTo(250, 480);
+  ctx.lineTo(390, 480);
+  ctx.lineTo(250, 330);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx, 2.5);
+
+  // 4. Isometric Cyan Cube (Center, Depth ~ 0.6)
+  drawShadow(ctx, 470, 510, 60, 20);
+  // Top face
+  ctx.fillStyle = '#67E8F9';
+  ctx.beginPath();
+  ctx.moveTo(470, 380);
+  ctx.lineTo(530, 410);
+  ctx.lineTo(470, 440);
+  ctx.lineTo(410, 410);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx);
+  // Left face
+  ctx.fillStyle = '#06B6D4';
+  ctx.beginPath();
+  ctx.moveTo(410, 410);
+  ctx.lineTo(470, 440);
+  ctx.lineTo(470, 500);
+  ctx.lineTo(410, 470);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx);
+  // Right face
+  ctx.fillStyle = '#0891B2';
+  ctx.beginPath();
+  ctx.moveTo(470, 440);
+  ctx.lineTo(530, 410);
+  ctx.lineTo(530, 470);
+  ctx.lineTo(470, 500);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx);
+
+  // 5. Magenta Sphere (Center-Right, Depth ~ 0.7)
+  drawShadow(ctx, 620, 570, 55, 18);
+  ctx.beginPath();
+  ctx.arc(620, 500, 55, 0, Math.PI * 2);
+  ctx.fillStyle = '#D946EF';
+  ctx.fill();
+  strokeShape(ctx, 3);
+  // Highlight
+  ctx.beginPath();
+  ctx.arc(605, 480, 16, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.fill();
+
+  // 6. Yellow Gooseneck Lamp (Far Right, Depth ~ 0.8)
+  drawShadow(ctx, 880, 680, 70, 20);
+  // Base
+  ctx.fillStyle = '#CA8A04';
+  ctx.fillRect(830, 640, 100, 25);
+  strokeShape(ctx, 3);
+  // Neck
+  ctx.beginPath();
+  ctx.moveTo(880, 640);
+  ctx.bezierCurveTo(900, 460, 800, 320, 750, 360);
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = '#EAB308';
+  ctx.stroke();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#0F172A';
+  ctx.stroke();
+  // Lamp head
+  ctx.fillStyle = '#FACC15';
+  ctx.beginPath();
+  ctx.ellipse(740, 380, 35, 50, -0.6, 0, Math.PI * 2);
+  ctx.fill();
+  strokeShape(ctx, 3);
+
+  // 7. Stack of Three Books (Foreground Left, Depth ~ 0.88)
+  drawShadow(ctx, 220, 710, 90, 22);
+  // Bottom book (Blue)
+  ctx.fillStyle = '#3B82F6';
+  ctx.fillRect(130, 650, 180, 32);
+  strokeShape(ctx, 2.5);
+  // Middle book (Red)
+  ctx.fillStyle = '#EF4444';
+  ctx.fillRect(145, 620, 160, 30);
+  strokeShape(ctx, 2.5);
+  // Top book (Emerald)
+  ctx.fillStyle = '#10B981';
+  ctx.fillRect(155, 595, 140, 25);
+  strokeShape(ctx, 2.5);
+
+  // 8. Ceramic Coffee Mug labeled "COFFEE" (Foreground Center, Depth ~ 0.96)
+  drawShadow(ctx, 420, 730, 50, 18);
+  ctx.fillStyle = '#F43F5E';
+  // Cup body
+  ctx.beginPath();
+  ctx.roundRect(380, 600, 80, 105, [6, 6, 20, 20]);
+  ctx.fill();
+  strokeShape(ctx, 3);
+  // Handle
+  ctx.beginPath();
+  ctx.arc(465, 650, 22, -Math.PI / 2, Math.PI / 2);
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = '#F43F5E';
+  ctx.stroke();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#0F172A';
+  ctx.stroke();
+  // Label text
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('COFFEE', 393, 658);
+}
+
+// -- Scene 3: Layered Alpine Valley (Asymmetric) ---------------
+function drawLandscape(ctx: CanvasRenderingContext2D, W: number, H: number) {
+  // 1. Alpine Sky & Cloud (Depth ~ 0.05)
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+  sky.addColorStop(0, '#0284C7');
+  sky.addColorStop(1, '#BAE6FD');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Fluffy cloud (Left)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  ctx.arc(220, 110, 35, 0, Math.PI * 2);
+  ctx.arc(260, 95, 45, 0, Math.PI * 2);
+  ctx.arc(300, 110, 35, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 2. Snow-Capped Granite Mountain (Far Right Exclusively, Depth ~ 0.2)
+  ctx.fillStyle = '#475569';
+  ctx.beginPath();
+  ctx.moveTo(560, 440);
+  ctx.lineTo(820, 90);
+  ctx.lineTo(1040, 440);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx, 3);
+  // Snow cap
+  ctx.fillStyle = '#F8FAFC';
+  ctx.beginPath();
+  ctx.moveTo(820, 90);
+  ctx.lineTo(760, 180);
+  ctx.lineTo(790, 170);
+  ctx.lineTo(820, 200);
+  ctx.lineTo(855, 175);
+  ctx.lineTo(885, 190);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx, 2);
+
+  // 3. Purple Distant Ridge (Left-Center, Depth ~ 0.35)
+  ctx.fillStyle = '#6366F1';
+  ctx.beginPath();
+  ctx.moveTo(0, 440);
+  ctx.lineTo(0, 280);
+  ctx.lineTo(240, 230);
+  ctx.lineTo(460, 320);
+  ctx.lineTo(600, 440);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx, 2);
+
+  // 4. Pine Forest Belt (Mid-distance, Depth ~ 0.5)
+  const drawPine = (x: number, y: number, h: number) => {
+    ctx.fillStyle = '#065F46';
+    ctx.beginPath();
+    ctx.moveTo(x, y - h);
+    ctx.lineTo(x - h * 0.35, y);
+    ctx.lineTo(x + h * 0.35, y);
+    ctx.closePath();
+    ctx.fill();
+    strokeShape(ctx, 1.5);
+  };
+  for (let px = 60; px < 560; px += 35) {
+    drawPine(px, 440, 55 + (px % 25));
   }
 
-  // Desk surface (perspective)
-  const desk = ctx.createLinearGradient(0, H * 0.65, 0, H);
-  desk.addColorStop(0, '#3d2b1a');
-  desk.addColorStop(1, '#1f160d');
-  ctx.fillStyle = desk;
+  // Rolling Grass Foothill
+  ctx.fillStyle = '#15803D';
   ctx.beginPath();
-  ctx.moveTo(0, H * 0.65);
-  ctx.lineTo(W, H * 0.65);
+  ctx.moveTo(0, 440);
+  ctx.quadraticCurveTo(W * 0.4, 420, W, 480);
   ctx.lineTo(W, H);
   ctx.lineTo(0, H);
+  ctx.closePath();
   ctx.fill();
 
-  // Desk edge highlight
-  ctx.fillStyle = '#5a3f26';
-  ctx.fillRect(0, H * 0.65, W, 6);
+  // 5. Wooden Log Cabin with Smoking Chimney (Mid Left, Depth ~ 0.6)
+  drawShadow(ctx, 260, 510, 60, 18);
+  // Walls
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(200, 410, 120, 80);
+  strokeShape(ctx, 2.5);
+  // Roof
+  ctx.fillStyle = '#991B1B';
+  ctx.beginPath();
+  ctx.moveTo(185, 410);
+  ctx.lineTo(260, 350);
+  ctx.lineTo(335, 410);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx, 2.5);
+  // Chimney & smoke
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(285, 330, 18, 40);
+  strokeShape(ctx);
+  // Smoke puffs
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.arc(295, 310, 10, 0, Math.PI * 2);
+  ctx.arc(310, 285, 14, 0, Math.PI * 2);
+  ctx.fill();
 
-  // ── Far: stacked books (left) ─────────────────────────────
-  const bookData = [
-    { y: H * 0.35, h: 30, color: '#8B2252', label: true },
-    { y: H * 0.32, h: 30, color: '#1a5276', label: true },
-    { y: H * 0.29, h: 30, color: '#1e8449', label: true },
-    { y: H * 0.26, h: 25, color: '#784212', label: true },
-  ];
-  for (const book of bookData) {
-    ctx.fillStyle = book.color;
-    ctx.fillRect(W * 0.07, book.y, 110, book.h + 5);
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(W * 0.07 + 8, book.y + 4, 94, book.h - 2);
-  }
-  // Book spine labels
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.font = 'bold 9px monospace';
-  ctx.fillText('DESIGN PATTERNS', W * 0.075, H * 0.365);
-  ctx.fillText('ALGORITHMS', W * 0.075, H * 0.336);
-  ctx.fillText('MATHEMATICS', W * 0.075, H * 0.306);
-  ctx.fillText('PHILOSOPHY', W * 0.075, H * 0.278);
+  // 6. Winding Blue River across Middle Ground (Depth ~ 0.7)
+  ctx.fillStyle = '#0284C7';
+  ctx.beginPath();
+  ctx.moveTo(W, 490);
+  ctx.bezierCurveTo(680, 500, 520, 600, 0, 620);
+  ctx.lineTo(0, 690);
+  ctx.bezierCurveTo(550, 670, 720, 540, W, 550);
+  ctx.closePath();
+  ctx.fill();
+  strokeShape(ctx, 2.5, '#0369A1');
 
-  // Plant (back-left, slightly closer than books' wall)
-  ctx.fillStyle = '#3d2b1a';
-  ctx.fillRect(W * 0.03, H * 0.52, 50, 140);
-  ctx.fillStyle = '#5a3f26';
-  ctx.fillRect(W * 0.025, H * 0.515, 60, 10);
-  // Leaves
-  for (let i = 0; i < 7; i++) {
-    const angle = (i / 7) * Math.PI * 2;
-    const lx = W * 0.055 + Math.cos(angle) * 35;
-    const ly = H * 0.48 + Math.sin(angle) * 25;
-    ctx.fillStyle = `hsl(${120 + i * 10},60%,${25 + i * 3}%)`;
+  // 7. Stone Arch Bridge over River (Center-Right, Depth ~ 0.75)
+  ctx.fillStyle = '#94A3B8';
+  ctx.beginPath();
+  ctx.roundRect(580, 500, 140, 45, [8, 8, 0, 0]);
+  ctx.fill();
+  strokeShape(ctx, 2.5);
+  // Arch cutout
+  ctx.fillStyle = '#0284C7';
+  ctx.beginPath();
+  ctx.arc(650, 545, 35, Math.PI, 0);
+  ctx.fill();
+  strokeShape(ctx, 2.5);
+
+  // 8. Wildflower Meadow (Foreground Right, Depth ~ 0.85)
+  const drawFlower = (fx: number, fy: number, color: string) => {
+    ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.ellipse(lx, ly, 22, 10, angle, 0, Math.PI * 2);
+    ctx.arc(fx, fy, 7, 0, Math.PI * 2);
     ctx.fill();
-  }
+    strokeShape(ctx, 1);
+  };
+  drawFlower(780, 640, '#EF4444');
+  drawFlower(830, 660, '#EAB308');
+  drawFlower(880, 630, '#EC4899');
+  drawFlower(920, 670, '#F97316');
+  drawFlower(860, 690, '#A855F7');
 
-  // ── Mid: geometric solids ─────────────────────────────────
-  // Cube
-  const cubeX = W * 0.37, cubeY = H * 0.45, cubeS = 110;
-  ctx.fillStyle = '#5d6d7e';
-  ctx.fillRect(cubeX, cubeY, cubeS, cubeS);
-  // Top face
-  ctx.fillStyle = '#85929e';
+  // 9. Giant Ancient Oak Tree (Foreground Far Left Exclusively, Depth ~ 0.95)
+  drawShadow(ctx, 150, 750, 80, 22);
+  // Trunk
+  ctx.fillStyle = '#451A03';
   ctx.beginPath();
-  ctx.moveTo(cubeX, cubeY);
-  ctx.lineTo(cubeX + 40, cubeY - 30);
-  ctx.lineTo(cubeX + cubeS + 40, cubeY - 30);
-  ctx.lineTo(cubeX + cubeS, cubeY);
+  ctx.moveTo(110, 740);
+  ctx.quadraticCurveTo(140, 550, 130, 390);
+  ctx.lineTo(170, 390);
+  ctx.quadraticCurveTo(175, 550, 195, 740);
+  ctx.closePath();
   ctx.fill();
-  // Right face
-  ctx.fillStyle = '#3d4f61';
+  strokeShape(ctx, 3.5);
+  // Canopy
+  ctx.fillStyle = '#15803D';
   ctx.beginPath();
-  ctx.moveTo(cubeX + cubeS, cubeY);
-  ctx.lineTo(cubeX + cubeS + 40, cubeY - 30);
-  ctx.lineTo(cubeX + cubeS + 40, cubeY + cubeS - 30);
-  ctx.lineTo(cubeX + cubeS, cubeY + cubeS);
+  ctx.arc(150, 360, 110, 0, Math.PI * 2);
   ctx.fill();
-  // Grid lines on cube face
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) {
-    ctx.beginPath(); ctx.moveTo(cubeX + i * (cubeS / 4), cubeY); ctx.lineTo(cubeX + i * (cubeS / 4), cubeY + cubeS); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cubeX, cubeY + i * (cubeS / 4)); ctx.lineTo(cubeX + cubeS, cubeY + i * (cubeS / 4)); ctx.stroke();
-  }
+  strokeShape(ctx, 3.5);
 
-  // Sphere (center)
-  const sphX = W * 0.56, sphY = H * 0.52, sphR = 72;
-  const sphGrad = ctx.createRadialGradient(sphX - 20, sphY - 25, 5, sphX, sphY, sphR);
-  sphGrad.addColorStop(0, '#d4ac0d');
-  sphGrad.addColorStop(0.5, '#b7950b');
-  sphGrad.addColorStop(1, '#6e2f0a');
-  ctx.fillStyle = sphGrad;
-  ctx.beginPath(); ctx.arc(sphX, sphY, sphR, 0, Math.PI * 2); ctx.fill();
-  // Highlight
-  ctx.fillStyle = 'rgba(255,255,220,0.3)';
-  ctx.beginPath(); ctx.ellipse(sphX - 22, sphY - 28, 20, 14, -Math.PI / 4, 0, Math.PI * 2); ctx.fill();
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.beginPath(); ctx.ellipse(sphX, H * 0.645, sphR * 0.9, 14, 0, 0, Math.PI * 2); ctx.fill();
-
-  // Cone
-  const conX = W * 0.72, conBaseY = H * 0.645;
-  ctx.fillStyle = '#884ea0';
+  // 10. Wooden Trail Sign reading "TRAIL" (Foreground Left under tree, Depth ~ 0.98)
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(80, 620, 12, 110);
+  strokeShape(ctx, 2.5);
+  // Arrow pointing right
+  ctx.fillStyle = '#F59E0B';
   ctx.beginPath();
-  ctx.moveTo(conX, conBaseY - 160);
-  ctx.lineTo(conX - 55, conBaseY);
-  ctx.lineTo(conX + 55, conBaseY);
-  ctx.closePath(); ctx.fill();
-  const conGrad = ctx.createLinearGradient(conX - 55, 0, conX + 55, 0);
-  conGrad.addColorStop(0, 'rgba(0,0,0,0.4)');
-  conGrad.addColorStop(0.5, 'rgba(255,255,255,0.1)');
-  conGrad.addColorStop(1, 'rgba(0,0,0,0.5)');
-  ctx.fillStyle = conGrad;
-  ctx.beginPath();
-  ctx.moveTo(conX, conBaseY - 160);
-  ctx.lineTo(conX - 55, conBaseY);
-  ctx.lineTo(conX + 55, conBaseY);
-  ctx.closePath(); ctx.fill();
-  // Ellipse base
-  ctx.fillStyle = '#6c3483';
-  ctx.beginPath(); ctx.ellipse(conX, conBaseY, 55, 16, 0, 0, Math.PI * 2); ctx.fill();
-
-  // ── Near: desk lamp (right, tall) ────────────────────────
-  ctx.fillStyle = '#1c1c1c';
-  ctx.fillRect(W * 0.88, H * 0.3, 10, H * 0.35);
-  ctx.fillRect(W * 0.84, H * 0.63, 70, 12);
-  // Lamp head
-  ctx.fillStyle = '#c0c0c0';
-  ctx.beginPath();
-  ctx.moveTo(W * 0.885, H * 0.3);
-  ctx.lineTo(W * 0.82, H * 0.22);
-  ctx.lineTo(W * 0.955, H * 0.22);
-  ctx.closePath(); ctx.fill();
-  // Light cone
-  const lampGrad = ctx.createRadialGradient(W * 0.887, H * 0.3, 0, W * 0.887, H * 0.3, 200);
-  lampGrad.addColorStop(0, 'rgba(255,240,180,0.25)');
-  lampGrad.addColorStop(1, 'rgba(255,240,180,0)');
-  ctx.fillStyle = lampGrad;
-  ctx.beginPath();
-  ctx.moveTo(W * 0.887, H * 0.3);
-  ctx.arc(W * 0.887, H * 0.3, 200, Math.PI * 0.4, Math.PI * 0.75);
+  ctx.moveTo(50, 630);
+  ctx.lineTo(130, 630);
+  ctx.lineTo(150, 645);
+  ctx.lineTo(130, 660);
+  ctx.lineTo(50, 660);
+  ctx.closePath();
   ctx.fill();
-
-  // ── Closest: coffee mug (foreground) ─────────────────────
-  const mugX = W * 0.26, mugY = H * 0.57;
-  ctx.fillStyle = '#ecf0f1';
-  ctx.fillRect(mugX, mugY, 70, 80);
-  // Mug handle
-  ctx.strokeStyle = '#ecf0f1';
-  ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.arc(mugX + 70, mugY + 35, 25, -Math.PI * 0.5, Math.PI * 0.5);
-  ctx.stroke();
-  // Coffee surface
-  ctx.fillStyle = '#3d1f0a';
-  ctx.beginPath(); ctx.ellipse(mugX + 35, mugY + 10, 33, 10, 0, 0, Math.PI * 2); ctx.fill();
-  // Mug decoration
-  ctx.fillStyle = '#3498db';
-  ctx.font = 'bold 20px monospace';
-  ctx.fillText('⌨', mugX + 18, mugY + 55);
-}
-
-// ── Scene 3: Layered Landscape ────────────────────────────────
-function drawLandscape(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  // Sky
-  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.5);
-  sky.addColorStop(0, '#0d1b2a');
-  sky.addColorStop(0.5, '#1b4f72');
-  sky.addColorStop(1, '#d35400');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
-
-  // Sun
-  ctx.fillStyle = 'rgba(255,180,50,0.9)';
-  ctx.beginPath(); ctx.arc(W * 0.78, H * 0.18, 55, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,200,80,0.3)';
-  ctx.beginPath(); ctx.arc(W * 0.78, H * 0.18, 90, 0, Math.PI * 2); ctx.fill();
-
-  // Clouds
-  for (let i = 0; i < 4; i++) {
-    const cx = W * (0.1 + i * 0.22), cy = H * (0.08 + i * 0.03);
-    ctx.fillStyle = 'rgba(220,230,245,0.6)';
-    ctx.beginPath(); ctx.ellipse(cx, cy, 60, 25, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx - 30, cy + 8, 40, 20, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx + 35, cy + 5, 45, 22, 0, 0, Math.PI * 2); ctx.fill();
-  }
-
-  // ── Far: snow-capped mountains ────────────────────────────
-  ctx.fillStyle = '#5d6d7e';
-  ctx.beginPath();
-  ctx.moveTo(0, H * 0.5);
-  // mountain peaks
-  ctx.lineTo(W * 0.05, H * 0.22);
-  ctx.lineTo(W * 0.18, H * 0.38);
-  ctx.lineTo(W * 0.28, H * 0.14);
-  ctx.lineTo(W * 0.42, H * 0.32);
-  ctx.lineTo(W * 0.55, H * 0.1);
-  ctx.lineTo(W * 0.68, H * 0.28);
-  ctx.lineTo(W * 0.78, H * 0.08);
-  ctx.lineTo(W * 0.9,  H * 0.26);
-  ctx.lineTo(W,        H * 0.18);
-  ctx.lineTo(W,        H * 0.5);
-  ctx.closePath(); ctx.fill();
-
-  // Snow caps
-  ctx.fillStyle = '#ecf0f1';
-  const peaks = [
-    [W * 0.05, H * 0.22, W * 0.03, H * 0.3],
-    [W * 0.28, H * 0.14, W * 0.06, H * 0.26],
-    [W * 0.55, H * 0.1,  W * 0.07, H * 0.22],
-    [W * 0.78, H * 0.08, W * 0.055, H * 0.19],
-  ];
-  for (const [px, py, pw, pb] of peaks) {
-    ctx.beginPath();
-    ctx.moveTo(px - pw, pb);
-    ctx.lineTo(px, py);
-    ctx.lineTo(px + pw, pb);
-    ctx.closePath(); ctx.fill();
-  }
-
-  // ── Mid: dark forest treeline ─────────────────────────────
-  for (let tx = -20; tx < W + 20; tx += 28) {
-    const th = 80 + Math.sin(tx * 0.05) * 30 + Math.random() * 20;
-    const ty = H * 0.52 - th;
-    ctx.fillStyle = `hsl(${130 + Math.sin(tx * 0.03) * 15}, 40%, ${12 + Math.random() * 8}%)`;
-    ctx.beginPath();
-    ctx.moveTo(tx + 14, ty);
-    ctx.lineTo(tx, H * 0.52);
-    ctx.lineTo(tx + 28, H * 0.52);
-    ctx.closePath(); ctx.fill();
-  }
-
-  // ── Mid-near: river with reflections ──────────────────────
-  const river = ctx.createLinearGradient(0, H * 0.57, 0, H * 0.68);
-  river.addColorStop(0, '#1a5276');
-  river.addColorStop(1, '#154360');
-  ctx.fillStyle = river;
-  ctx.beginPath();
-  ctx.moveTo(0, H * 0.6);
-  ctx.quadraticCurveTo(W * 0.3, H * 0.57, W * 0.5, H * 0.6);
-  ctx.quadraticCurveTo(W * 0.7, H * 0.63, W, H * 0.6);
-  ctx.lineTo(W, H * 0.68);
-  ctx.quadraticCurveTo(W * 0.7, H * 0.71, W * 0.5, H * 0.68);
-  ctx.quadraticCurveTo(W * 0.3, H * 0.65, 0, H * 0.68);
-  ctx.closePath(); ctx.fill();
-  // River shimmer
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 1;
-  for (let rx = 20; rx < W - 20; rx += 60) {
-    ctx.beginPath();
-    ctx.moveTo(rx, H * 0.62);
-    ctx.quadraticCurveTo(rx + 20, H * 0.615, rx + 40, H * 0.62);
-    ctx.stroke();
-  }
-
-  // Grass bank
-  const bank = ctx.createLinearGradient(0, H * 0.68, 0, H);
-  bank.addColorStop(0, '#27ae60');
-  bank.addColorStop(0.3, '#229954');
-  bank.addColorStop(1, '#1e8449');
-  ctx.fillStyle = bank;
-  ctx.fillRect(0, H * 0.68, W, H * 0.32);
-
-  // ── Near: wildflower meadow ───────────────────────────────
-  const flowerColors = ['#e74c3c', '#f39c12', '#9b59b6', '#3498db', '#e91e63', '#fff'];
-  for (let i = 0; i < 120; i++) {
-    const fx = Math.random() * W;
-    const fy = H * 0.72 + Math.random() * H * 0.2;
-    const fr = 3 + Math.random() * 5;
-    ctx.fillStyle = flowerColors[Math.floor(Math.random() * flowerColors.length)] ?? '#fff';
-    ctx.beginPath(); ctx.arc(fx, fy, fr, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#f1c40f';
-    ctx.beginPath(); ctx.arc(fx, fy, fr * 0.4, 0, Math.PI * 2); ctx.fill();
-    // Stem
-    ctx.strokeStyle = '#27ae60';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(fx, fy + fr); ctx.lineTo(fx, fy + fr + 15); ctx.stroke();
-  }
-
-  // ── Closest: single detailed tree (left) ──────────────────
-  const trunkX = W * 0.1, trunkBot = H;
-  ctx.fillStyle = '#5d4037';
-  ctx.beginPath();
-  ctx.moveTo(trunkX - 20, trunkBot);
-  ctx.lineTo(trunkX - 15, H * 0.52);
-  ctx.lineTo(trunkX + 15, H * 0.52);
-  ctx.lineTo(trunkX + 20, trunkBot);
-  ctx.fill();
-  // Bark texture
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-  ctx.lineWidth = 1;
-  for (let by = H * 0.55; by < trunkBot; by += 18) {
-    ctx.beginPath();
-    ctx.moveTo(trunkX - 14, by);
-    ctx.quadraticCurveTo(trunkX, by + 8, trunkX + 14, by);
-    ctx.stroke();
-  }
-  // Branches
-  ctx.strokeStyle = '#5d4037';
-  ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(trunkX, H * 0.52); ctx.lineTo(trunkX - 60, H * 0.44); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(trunkX, H * 0.52); ctx.lineTo(trunkX + 50, H * 0.47); ctx.stroke();
-  // Canopy — layered circles
-  for (const [cx2, cy2, cr] of [
-    [trunkX, H * 0.3, 90], [trunkX - 50, H * 0.36, 65],
-    [trunkX + 55, H * 0.37, 60], [trunkX - 20, H * 0.22, 55],
-    [trunkX + 25, H * 0.26, 50],
-  ]) {
-    const leafGrad = ctx.createRadialGradient(cx2 - 10, cy2 - 10, 5, cx2, cy2, cr);
-    leafGrad.addColorStop(0, '#27ae60');
-    leafGrad.addColorStop(1, '#1a7a42');
-    ctx.fillStyle = leafGrad;
-    ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI * 2); ctx.fill();
-  }
+  strokeShape(ctx, 2.5);
+  ctx.fillStyle = '#0F172A';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('TRAIL ?', 60, 649);
 }

@@ -1,5 +1,5 @@
 // ============================================================
-//  Depth utilities — median inside bbox, resize, row flip
+//  Depth utilities — median, resize, row flip, Sobel normal map
 // ============================================================
 
 /** Compute median depth (0-255) for depth pixels inside [x1,y1,x2,y2] bbox.
@@ -69,4 +69,58 @@ export function flipYUint8(data: Uint8Array, width: number, height: number): Uin
     flipped.set(data.subarray(srcRow, srcRow + width), dstRow);
   }
   return flipped;
+}
+
+/** Generate a tangent-space RGBA normal map from a 1-channel grayscale depth map
+ *  using a 3x3 Sobel filter. Strength scales the slope response. */
+export function generateSobelNormalMap(
+  depth: Uint8Array,
+  width: number,
+  height: number,
+  strength = 3.5
+): Uint8Array {
+  const normalData = new Uint8Array(width * height * 4);
+
+  const getD = (x: number, y: number): number => {
+    const cx = Math.max(0, Math.min(width - 1, x));
+    const cy = Math.max(0, Math.min(height - 1, y));
+    return (depth[cy * width + cx] ?? 0) / 255.0;
+  };
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // 3x3 Sobel kernel samples
+      const tl = getD(x - 1, y - 1);
+      const t  = getD(x,     y - 1);
+      const tr = getD(x + 1, y - 1);
+      const l  = getD(x - 1, y);
+      const r  = getD(x + 1, y);
+      const bl = getD(x - 1, y + 1);
+      const b  = getD(x,     y + 1);
+      const br = getD(x + 1, y + 1);
+
+      // Gradient in X and Y
+      const dx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
+      const dy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
+
+      // Tangent space normal vector
+      let nx = -dx * strength;
+      let ny = -dy * strength;
+      let nz = 1.0;
+
+      // Normalize vector
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1.0;
+      nx /= len;
+      ny /= len;
+      nz /= len;
+
+      const idx = (y * width + x) * 4;
+      normalData[idx]     = Math.floor((nx * 0.5 + 0.5) * 255);
+      normalData[idx + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
+      normalData[idx + 2] = Math.floor((nz * 0.5 + 0.5) * 255);
+      normalData[idx + 3] = 255;
+    }
+  }
+
+  return normalData;
 }

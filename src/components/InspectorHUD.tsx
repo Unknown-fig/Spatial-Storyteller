@@ -87,6 +87,13 @@ export const InspectorHUD: React.FC<InspectorHUDProps> = ({ onToggleForceWasm, i
   );
 };
 
+// -- Helpers ---------------------------------------------------------------
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 B';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // -- Telemetry --------------------------------------------------------------
 const TelemetrySection: React.FC<{
   device: 'webgpu' | 'wasm' | null;
@@ -124,7 +131,7 @@ const TelemetrySection: React.FC<{
         {onToggleForceWasm && (
           <button
             onClick={onToggleForceWasm}
-            title={isForcingWasm ? 'Click to allow WebGPU' : 'Click to force WASM CPU mode'}
+            title={isForcingWasm ? 'Click to allow WebGPU auto-detection' : 'Click to force WASM CPU mode'}
             className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
               isForcingWasm
                 ? 'border-wasm/60 bg-wasm/10 text-wasm'
@@ -137,26 +144,26 @@ const TelemetrySection: React.FC<{
         )}
       </div>
 
-      {/* Download progress (first load) */}
+      {/* Model Download Progress — shows real byte sizes from events, no hardcoded values */}
       {!modelsReady && (florenceProgress.length > 0 || depthProgress.length > 0) && (
         <div className="mb-3 space-y-2 p-2 rounded bg-white/5 border border-white/5">
           <p className="text-[11px] font-mono text-white/50 mb-1">
-            Downloading models (first visit only — cached offline after)
+            Downloading ONNX models (first visit only — cached offline after)
           </p>
-          <ProgressGroup label="Florence-2" entries={florenceProgress} />
-          <ProgressGroup label="Depth Anything v2" entries={depthProgress} />
+          <ProgressGroup label="Florence-2-base-ft" entries={florenceProgress} />
+          <ProgressGroup label="Depth-Anything-v2-small" entries={depthProgress} />
         </div>
       )}
 
-      {/* Timing table */}
+      {/* Timing Table */}
       <table className="w-full text-xs font-mono">
         <tbody>
-          <TimingRow label="Florence Caption" ms={timings?.captionMs ?? stageMs.caption} />
+          <TimingRow label="Florence-2 Caption" ms={timings?.captionMs ?? stageMs.caption} />
           <TimingRow label="Region Grounding" ms={timings?.regionsMs ?? stageMs.regions} />
           <TimingRow label="Depth Estimation" ms={timings?.depthMs ?? stageMs.depth} />
           {timings && (
             <tr className="border-t border-white/10 mt-1">
-              <td className="py-1 text-white/50 font-semibold">Total Inference</td>
+              <td className="py-1 text-white/50 font-semibold">Total Pipeline</td>
               <td className="py-1 text-right text-accent font-semibold">
                 {(timings.captionMs + timings.regionsMs + timings.depthMs).toLocaleString()} ms
               </td>
@@ -169,14 +176,16 @@ const TelemetrySection: React.FC<{
 };
 
 const ProgressGroup: React.FC<{ label: string; entries: { file: string; loaded: number; total: number }[] }> = ({ label, entries }) => {
-  const total = entries.reduce((s, e) => s + (e.total || 1), 0);
+  const total = entries.reduce((s, e) => s + (e.total || 0), 0);
   const loaded = entries.reduce((s, e) => s + (e.loaded || 0), 0);
   const pct = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
   return (
     <div>
       <div className="flex justify-between text-[11px] font-mono text-white/60 mb-0.5">
-        <span>{label}</span>
-        <span>{pct.toFixed(0)}%</span>
+        <span className="truncate max-w-[140px]">{label}</span>
+        <span>
+          {formatBytes(loaded)} / {formatBytes(total)} ({pct.toFixed(0)}%)
+        </span>
       </div>
       <div className="h-1 bg-white/10 rounded overflow-hidden">
         <div className="h-full progress-bar-fill rounded" style={{ width: `${pct}%` }} />
@@ -239,7 +248,7 @@ const TensorXRay: React.FC<{
     }
   }, [sourceCanvas, objects, selection]);
 
-  // Redraw depth tensor canvas
+  // Redraw depth tensor canvas (Fix 3: Top-down depth map)
   useEffect(() => {
     const c = depthCanvasRef.current;
     if (!c || !depthData || depthWidth === 0 || depthHeight === 0) return;

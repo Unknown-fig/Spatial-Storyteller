@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { useAppStore } from '../store/appStore';
-import { medianDepthInBox, resizeDepth, flipYUint8 } from '../utils/depthUtils';
+import { medianDepthInBox, resizeDepth, flipYUint8, generateSobelNormalMap } from '../utils/depthUtils';
 import { computePinCoords } from '../utils/pinUtils';
 import type { SceneObject } from '../types/protocol';
 
@@ -26,7 +26,7 @@ vec3 turboColormap(float x) {
 export const SpatialViewport: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Three.js object refs ï¿½ persistent across renders
+  // Three.js object refs — persistent across renders
   const rendererRef    = useRef<THREE.WebGLRenderer | null>(null);
   const cssRendererRef = useRef<CSS2DRenderer | null>(null);
   const sceneRef       = useRef<THREE.Scene | null>(null);
@@ -39,6 +39,7 @@ export const SpatialViewport: React.FC = () => {
   const disposablesRef = useRef<(THREE.BufferGeometry | THREE.Material | THREE.Texture)[]>([]);
   const colorTexRef    = useRef<THREE.CanvasTexture | null>(null);
   const depthTexRef    = useRef<THREE.DataTexture | null>(null);
+  const normalTexRef   = useRef<THREE.DataTexture | null>(null);
   const heatmapMatRef  = useRef<THREE.ShaderMaterial | null>(null);
   const pointsMatRef   = useRef<THREE.ShaderMaterial | null>(null);
 
@@ -59,7 +60,7 @@ export const SpatialViewport: React.FC = () => {
     selection,
   } = store;
 
-  // -- Init Three.js scene ------------------------------------------------
+  // -- Init Three.js Scene ------------------------------------------------
   useEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
@@ -72,13 +73,13 @@ export const SpatialViewport: React.FC = () => {
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // CSS2D renderer for HTML pins
+    // CSS2D Renderer for HTML pins
     const cssRenderer = new CSS2DRenderer();
     cssRenderer.setSize(container.clientWidth, container.clientHeight);
     cssRenderer.domElement.style.position = 'absolute';
     cssRenderer.domElement.style.top = '0';
     cssRenderer.domElement.style.left = '0';
-    cssRenderer.domElement.style.pointerEvents = 'none'; // Critical: allow orbit controls to receive events
+    cssRenderer.domElement.style.pointerEvents = 'none'; // Critical: mouse events fall through to OrbitControls
     container.appendChild(cssRenderer.domElement);
     cssRendererRef.current = cssRenderer;
 
@@ -92,14 +93,16 @@ export const SpatialViewport: React.FC = () => {
     camera.position.set(0, 0, 2.5);
     cameraRef.current = camera;
 
-    // Lights for 3D relief readability
-    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+    // Lights: Ambient 0.6 + Directional 1.0 (Fix 4)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(-1, 1.5, 2);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(-1.2, 1.5, 2.0);
     scene.add(dirLight);
-    const fillLight = new THREE.DirectionalLight(0x8899ff, 0.4);
-    fillLight.position.set(1, -1, 1);
+
+    const fillLight = new THREE.DirectionalLight(0x8899ff, 0.3);
+    fillLight.position.set(1.5, -1.0, 1.0);
     scene.add(fillLight);
 
     // OrbitControls
@@ -110,12 +113,12 @@ export const SpatialViewport: React.FC = () => {
     controls.maxDistance = 8;
     controlsRef.current = controls;
 
-    // Cancel camera tween on user drag
+    // Cancel tween on user interaction
     controls.addEventListener('start', () => {
       if (tweenRef.current) tweenRef.current.active = false;
     });
 
-    // Animation loop
+    // Animation Loop
     const animate = () => {
       rafRef.current = requestAnimationFrame(animate);
       controls.update();
@@ -124,7 +127,7 @@ export const SpatialViewport: React.FC = () => {
       const tw = tweenRef.current;
       if (tw?.active) {
         tw.t = Math.min(1, tw.t + 0.016 / 0.8); // 800ms tween
-        const ease = 1 - Math.pow(1 - tw.t, 3); // ease-out cubic
+        const ease = 1 - Math.pow(1 - tw.t, 3); // cubic ease-out
         camera.position.lerpVectors(tw.from, tw.to, ease);
         controls.target.lerpVectors(tw.targetFrom, tw.targetTo, ease);
         controls.update();
@@ -136,7 +139,7 @@ export const SpatialViewport: React.FC = () => {
     };
     animate();
 
-    // Resize observer
+    // Resize Observer
     const ro = new ResizeObserver(() => {
       if (!containerRef.current) return;
       const w = container.clientWidth;
@@ -146,6 +149,12 @@ export const SpatialViewport: React.FC = () => {
       cssRenderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+
+      // Fix 5: Adapt point size to canvas height
+      if (pointsMatRef.current) {
+        const dynamicPtSize = Math.max(2.5, (h / 700.0) * 3.5);
+        pointsMatRef.current.uniforms.pointSize.value = dynamicPtSize;
+      }
     });
     ro.observe(container);
 
@@ -159,12 +168,12 @@ export const SpatialViewport: React.FC = () => {
     };
   }, []);
 
-  // -- Build/update the 3D mesh when scene data changes ------------------
+  // -- Build / Update 3D Mesh when Image or Depth Changes -----------------
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene || !sourceCanvas || !depthData || processedWidth === 0 || processedHeight === 0) return;
 
-    // Dispose old objects
+    // Dispose old resources
     const dispose = disposablesRef.current;
     if (meshRef.current) {
       scene.remove(meshRef.current);
@@ -183,19 +192,21 @@ export const SpatialViewport: React.FC = () => {
     const planeW = aspect;
     const planeH = 1;
 
-    // -- Color texture from canvas -----------------------------------------
+    // -- Fix 3: Texture Orientation ----------------------------------------
+    // Color: CanvasTexture with default flipY = true.
+    // (Do not use ImageBitmap because flipY is ignored on it).
     const colorTex = new THREE.CanvasTexture(sourceCanvas);
     colorTex.colorSpace = THREE.SRGBColorSpace;
     colorTex.minFilter = THREE.LinearFilter;
     colorTex.magFilter = THREE.LinearFilter;
+    colorTex.flipY = true;
     colorTex.needsUpdate = true;
     colorTexRef.current = colorTex;
     dispose.push(colorTex);
 
-    // -- Depth texture -----------------------------------------------------
-    // Depth map is resized to match processed image dimensions.
-    // NEAR = BRIGHT (255 = near, 0 = far).
-    // We vertically flip the rows in depthData so DataTexture bottom matches plane UV (0,0).
+    // Depth: DataTexture (flipY = false).
+    // We flip the rows in JS before upload so row 0 = bottom, matching WebGL UV (0,0).
+    // The top-down depthData in store is kept intact for pin sampling & HUD.
     const resizedDepth = resizeDepth(depthData, depthWidth, depthHeight, imgW, imgH);
     const flippedDepth = flipYUint8(resizedDepth, imgW, imgH);
 
@@ -208,26 +219,57 @@ export const SpatialViewport: React.FC = () => {
     );
     depthTex.minFilter = THREE.LinearFilter;
     depthTex.magFilter = THREE.LinearFilter;
+    depthTex.flipY = false;
     depthTex.needsUpdate = true;
     depthTexRef.current = depthTex;
     dispose.push(depthTex);
 
-    // -- Geometry ï¿½ PlaneGeometry(aspect, 1, 256, 256) ---------------------
+    // -- Fix 4: Tangent-Space Normal Map (Sobel filter on CPU) --------------
+    const normalData = generateSobelNormalMap(flippedDepth, imgW, imgH, 3.5);
+    const normalTex = new THREE.DataTexture(
+      normalData,
+      imgW,
+      imgH,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType
+    );
+    normalTex.minFilter = THREE.LinearFilter;
+    normalTex.magFilter = THREE.LinearFilter;
+    normalTex.flipY = false;
+    normalTex.needsUpdate = true;
+    normalTexRef.current = normalTex;
+    dispose.push(normalTex);
+
+    // -- Dev-only Sanity Check (Fix 3) -------------------------------------
+    if (process.env.NODE_ENV !== 'production') {
+      let maxD = 0;
+      for (let i = 0; i < resizedDepth.length; i++) {
+        if ((resizedDepth[i] ?? 0) > maxD) maxD = resizedDepth[i] ?? 0;
+      }
+      const testZ = (maxD / 255) * displacementScale;
+      console.assert(testZ >= 0, '[Sanity Check] Near object displacement must rise toward camera (+Z)');
+    }
+
+    // -- PlaneGeometry(aspect, 1, 256, 256) --------------------------------
     const geo = new THREE.PlaneGeometry(planeW, planeH, 256, 256);
     dispose.push(geo);
 
     // -- Materials ---------------------------------------------------------
-    // 1. Textured 3D Relief
+    // 1. Textured 3D Relief (with normal map driven by displacementScale)
     const texturedMat = new THREE.MeshStandardMaterial({
       map: colorTex,
       displacementMap: depthTex,
       displacementScale: displacementScale,
       displacementBias: 0,
+      normalMap: normalTex,
+      normalScale: new THREE.Vector2(displacementScale, displacementScale),
+      roughness: 0.5,
+      metalness: 0.1,
       side: THREE.FrontSide,
     });
     dispose.push(texturedMat);
 
-    // 2. Depth Heatmap Shader (Turbo colormap polynomial approximation)
+    // 2. Depth Heatmap Shader (Google Turbo colormap polynomial in GLSL)
     const heatmapMat = new THREE.ShaderMaterial({
       uniforms: {
         depthMap: { value: depthTex },
@@ -277,27 +319,32 @@ export const SpatialViewport: React.FC = () => {
     scene.add(mesh);
     meshRef.current = mesh;
 
-    // -- 4. Point Cloud (THREE.Points + custom vertex shader) ---------------
-    const pointsGeo = new THREE.PlaneGeometry(planeW, planeH, 160, 160);
+    // -- Fix 5: 3D Point Cloud (256x256 = 65,536 points with vertex shader) --
+    const pointsGeo = new THREE.PlaneGeometry(planeW, planeH, 256, 256);
     dispose.push(pointsGeo);
+
+    const initialContainerHeight = containerRef.current?.clientHeight || 600;
+    const dynamicPtSize = Math.max(2.5, (initialContainerHeight / 700.0) * 3.5);
 
     const pointsMat = new THREE.ShaderMaterial({
       uniforms: {
         depthMap: { value: depthTex },
         colorMap: { value: colorTex },
         displacementScale: { value: displacementScale },
+        pointSize: { value: dynamicPtSize },
       },
       vertexShader: `
         uniform sampler2D depthMap;
         uniform sampler2D colorMap;
         uniform float displacementScale;
+        uniform float pointSize;
         varying vec3 vColor;
         void main() {
           float depthVal = texture2D(depthMap, uv).r;
           vec3 displaced = position + normal * (depthVal * displacementScale);
           vColor = texture2D(colorMap, uv).rgb;
           vec4 mvPos = modelViewMatrix * vec4(displaced, 1.0);
-          gl_PointSize = 3.0 * (1.0 / -mvPos.z);
+          gl_PointSize = pointSize * (1.0 / -mvPos.z);
           gl_Position = projectionMatrix * mvPos;
         }
       `,
@@ -323,7 +370,7 @@ export const SpatialViewport: React.FC = () => {
       mesh.visible = false;
     }
 
-    // -- Pins --------------------------------------------------------------
+    // -- Pins (Fix 3: top-down resizedDepth for accurate sampling) ---------
     if (objects.length > 0) {
       buildPins(scene, objects, resizedDepth, imgW, imgH, planeW, planeH, displacementScale);
     }
@@ -331,11 +378,12 @@ export const SpatialViewport: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceCanvas, depthData, processedWidth, processedHeight, objects]);
 
-  // -- Update render mode ------------------------------------------------
+  // -- Update Render Mode ------------------------------------------------
   useEffect(() => {
     const mesh = meshRef.current;
     const points = pointsRef.current;
     const depthTex = depthTexRef.current;
+    const normalTex = normalTexRef.current;
     const colorTex = colorTexRef.current;
     if (!mesh) return;
 
@@ -368,6 +416,10 @@ export const SpatialViewport: React.FC = () => {
           displacementMap: depthTex,
           displacementScale: displacementScale,
           displacementBias: 0,
+          normalMap: normalTex ?? undefined,
+          normalScale: new THREE.Vector2(displacementScale, displacementScale),
+          roughness: 0.5,
+          metalness: 0.1,
         });
         disposablesRef.current.push(mat);
         mesh.material = mat;
@@ -376,7 +428,7 @@ export const SpatialViewport: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderMode]);
 
-  // -- Update displacement scale -----------------------------------------
+  // -- Update Displacement Scale (Fix 4: drive normalScale) --------------
   useEffect(() => {
     const mesh = meshRef.current;
     if (mesh) {
@@ -384,6 +436,9 @@ export const SpatialViewport: React.FC = () => {
       if ('displacementScale' in mat) {
         const m = mat as THREE.MeshStandardMaterial;
         m.displacementScale = displacementScale;
+        if (m.normalScale) {
+          m.normalScale.set(displacementScale, displacementScale);
+        }
         m.needsUpdate = true;
       }
     }
@@ -398,7 +453,7 @@ export const SpatialViewport: React.FC = () => {
     updatePinZ(displacementScale);
   }, [displacementScale]);
 
-  // -- Update camera FOV -------------------------------------------------
+  // -- Update Camera FOV -------------------------------------------------
   useEffect(() => {
     const cam = cameraRef.current;
     if (!cam) return;
@@ -406,7 +461,7 @@ export const SpatialViewport: React.FC = () => {
     cam.updateProjectionMatrix();
   }, [cameraFov]);
 
-  // -- Highlight selected / hovered pin ----------------------------------
+  // -- Highlight Selected / Hovered Pin ----------------------------------
   useEffect(() => {
     pinsRef.current.forEach((pin, id) => {
       const el = pin.element as HTMLElement;
@@ -447,7 +502,7 @@ export const SpatialViewport: React.FC = () => {
   const buildPins = useCallback((
     scene: THREE.Scene,
     objs: SceneObject[],
-    depthArr: Uint8Array,
+    topDownDepth: Uint8Array,
     imgW: number,
     imgH: number,
     planeW: number,
@@ -459,8 +514,9 @@ export const SpatialViewport: React.FC = () => {
       const [x1, y1, x2, y2] = obj.box;
       const cx = (x1 + x2) / 2;
       const cy = (y1 + y2) / 2;
-      const depthVal = medianDepthInBox(depthArr, imgW, imgH, imgW, imgH, obj.box);
+      const depthVal = medianDepthInBox(topDownDepth, imgW, imgH, imgW, imgH, obj.box);
       const depthNorm = depthVal / 255;
+      // Fix 3: Standard pin unprojection math: v = cy/imgH (top-down), Y = (0.5 - v) * H_plane
       const coords = computePinCoords(cx, cy, imgW, imgH, depthNorm, dispScale, planeW, planeH);
 
       const wrapper = document.createElement('div');
@@ -472,7 +528,7 @@ export const SpatialViewport: React.FC = () => {
 
       const label = document.createElement('div');
       label.className = 'pin-label';
-      label.textContent = obj.label.length > 22 ? obj.label.slice(0, 20) + 'ï¿½' : obj.label;
+      label.textContent = obj.label.length > 22 ? obj.label.slice(0, 20) + '…' : obj.label;
       label.title = `${obj.label} (Z: ${coords.z.toFixed(3)})`;
 
       label.addEventListener('click', (ev) => {
