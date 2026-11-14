@@ -41,6 +41,11 @@ export const App: React.FC = () => {
           s.setDevice(msg.device);
           break;
 
+        case 'ready':
+          s.setModelsReady(true);
+          s.setStatus('idle');
+          break;
+
         case 'progress':
           if (msg.model === 'florence') {
             s.addFlorenceProgress({ file: msg.file, loaded: msg.loaded, total: msg.total });
@@ -132,14 +137,14 @@ export const App: React.FC = () => {
             SpatialLens <span className="text-accent">3D</span>
           </span>
           <span className="hidden sm:inline text-xs font-mono text-white/30">
-            browser-native CV diorama · no backend
+            browser-native CV diorama ï¿½ no backend
           </span>
         </div>
 
         <div className="flex items-center gap-3">
           {status === 'loading-models' && (
             <span className="text-xs font-mono text-wasm animate-pulse">
-              ? downloading models (first visit)…
+              ? downloading models (first visit)ï¿½
             </span>
           )}
           {status === 'error' && (
@@ -196,18 +201,18 @@ export const App: React.FC = () => {
             {/* Analyzing overlay indicator */}
             {status === 'analyzing' && (
               <div className="absolute top-3 left-3 glass px-3 py-1.5 rounded text-xs font-mono text-accent animate-pulse border border-accent/30 shadow-lg">
-                ? Executing local CV pipeline…
+                ? Executing local CV pipelineï¿½
               </div>
             )}
           </div>
 
-          {/* Bottom Bar — Scene Selector & Upload */}
+          {/* Bottom Bar ï¿½ Scene Selector & Upload */}
           <div className="flex items-center px-3 py-2 border-t border-white/5 glass flex-shrink-0 z-10 overflow-x-auto">
             <SceneSelector workerRef={workerRef as React.RefObject<Worker | null>} />
           </div>
         </div>
 
-        {/* Right Column — Inspector HUD */}
+        {/* Right Column ï¿½ Inspector HUD */}
         <div className="relative h-full border-l border-white/5">
           <InspectorHUD
             onToggleForceWasm={handleToggleForceWasm}

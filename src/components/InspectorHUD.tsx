@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronRight, ChevronLeft, Cpu, Zap, RefreshCw } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Cpu, Zap, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { medianDepthInBox } from '../utils/depthUtils';
 import type { SceneObject } from '../types/protocol';
@@ -124,7 +124,9 @@ const TelemetrySection: React.FC<{
             <span className="text-xs font-mono text-white/30">— detecting —</span>
           )}
           {modelsReady && (
-            <span className="text-xs font-mono text-emerald-400/80">ready</span>
+            <span className="flex items-center gap-1 text-xs font-mono text-emerald-400/90">
+              <CheckCircle2 size={11} /> ready
+            </span>
           )}
         </div>
 
@@ -144,14 +146,19 @@ const TelemetrySection: React.FC<{
         )}
       </div>
 
-      {/* Model Download Progress — shows real byte sizes from events, no hardcoded values */}
-      {!modelsReady && (florenceProgress.length > 0 || depthProgress.length > 0) && (
-        <div className="mb-3 space-y-2 p-2 rounded bg-white/5 border border-white/5">
-          <p className="text-[11px] font-mono text-white/50 mb-1">
-            Downloading ONNX models (first visit only — cached offline after)
+      {/* Model Download Progress or Ready Status */}
+      {modelsReady ? (
+        <div className="mb-3 p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono flex items-center gap-1.5">
+          <CheckCircle2 size={13} />
+          <span>Models loaded & cached in browser</span>
+        </div>
+      ) : (
+        <div className="mb-3 space-y-2.5 p-2 rounded bg-white/5 border border-white/5">
+          <p className="text-[11px] font-mono text-white/60 mb-1">
+            Downloading ONNX models (first visit only — cached offline after):
           </p>
-          <ProgressGroup label="Florence-2-base-ft" entries={florenceProgress} />
-          <ProgressGroup label="Depth-Anything-v2-small" entries={depthProgress} />
+          <ProgressGroup label="Depth-Anything-v2" entries={depthProgress} />
+          <ProgressGroup label="Florence-2-base" entries={florenceProgress} />
         </div>
       )}
 
@@ -179,17 +186,25 @@ const ProgressGroup: React.FC<{ label: string; entries: { file: string; loaded: 
   const total = entries.reduce((s, e) => s + (e.total || 0), 0);
   const loaded = entries.reduce((s, e) => s + (e.loaded || 0), 0);
   const pct = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
+  const activeFile = entries.find(e => e.loaded < e.total && e.total > 0) || entries[entries.length - 1];
+
   return (
-    <div>
-      <div className="flex justify-between text-[11px] font-mono text-white/60 mb-0.5">
-        <span className="truncate max-w-[140px]">{label}</span>
-        <span>
-          {formatBytes(loaded)} / {formatBytes(total)} ({pct.toFixed(0)}%)
+    <div className="space-y-1">
+      <div className="flex justify-between text-[11px] font-mono text-white/70">
+        <span className="font-semibold">{label}</span>
+        <span className="text-accent">
+          {total > 0 ? `${formatBytes(loaded)} / ${formatBytes(total)} (${pct.toFixed(0)}%)` : 'Connecting...'}
         </span>
       </div>
-      <div className="h-1 bg-white/10 rounded overflow-hidden">
-        <div className="h-full progress-bar-fill rounded" style={{ width: `${pct}%` }} />
+      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+        <div className="h-full progress-bar-fill rounded-full" style={{ width: `${Math.max(2, pct)}%` }} />
       </div>
+      {activeFile && (
+        <div className="flex justify-between text-[10px] font-mono text-white/40 truncate">
+          <span className="truncate max-w-[170px]" title={activeFile.file}>{activeFile.file.split('/').pop()}</span>
+          <span>{activeFile.total > 0 ? `${formatBytes(activeFile.loaded)} / ${formatBytes(activeFile.total)}` : ''}</span>
+        </div>
+      )}
     </div>
   );
 };

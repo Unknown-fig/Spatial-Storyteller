@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
 // ============================================================
-//  SpatialLens 3D ï¿½ Vision Worker (Track 1)
+//  SpatialLens 3D — Vision Worker (Track 1)
 //  Runs Florence-2 (caption + region grounding) + Depth Anything v2
-//  All inference runs locally in the browser ï¿½ no backend.
+//  All inference runs locally in the browser — no backend.
 // ============================================================
 
 import {
@@ -17,7 +17,7 @@ import {
 import type { WorkerInMsg, WorkerOutMsg, SceneObject } from '../types/protocol';
 import { resizeDepth } from '../utils/depthUtils';
 
-// -- Environment -----------------------------------------------
+// -- Environment Configuration --------------------------------
 env.useBrowserCache = true;
 // When not cross-origin isolated, SharedArrayBuffer is unavailable ? enforce 1 thread
 if (!self.crossOriginIsolated) {
@@ -36,7 +36,7 @@ let processor: any = null;
 let tokenizer: any = null;
 let depthPipe: any = null;
 
-// Queue & Run State (Fix 1)
+// Queue & Run State (Fix 1: while loop, try/finally)
 let busy = false;
 let currentRunId = -1;
 let pendingRun: { runId: number; bitmap: ImageBitmap } | null = null;
@@ -48,17 +48,45 @@ function post(msg: WorkerOutMsg): void {
   self.postMessage(msg);
 }
 
+/** Throttled progress callback to prevent flooding the main thread's event loop.
+ *  Limits updates to at most ~8 times/sec per file unless completed. */
 function makeProgress(model: 'florence' | 'depth') {
-  return (progress: { file?: string; loaded?: number; total?: number; status?: string }) => {
-    if (progress.status === 'progress' || (progress.loaded !== undefined && progress.total !== undefined)) {
-      post({
-        type: 'progress',
-        model,
-        file: progress.file ?? '',
-        loaded: progress.loaded ?? 0,
-        total: progress.total ?? 1,
-      });
+  const lastUpdate = new Map<string, number>();
+
+  return (progress: {
+    status?: string;
+    file?: string;
+    name?: string;
+    loaded?: number;
+    total?: number;
+    progress?: number;
+  }) => {
+    const file = progress.file || progress.name || (model === 'depth' ? 'depth_anything_v2.onnx' : 'florence_weights.onnx');
+    const now = performance.now();
+    const prev = lastUpdate.get(file) ?? 0;
+    const isDone = progress.status === 'done' || (progress.loaded !== undefined && progress.total !== undefined && progress.total > 0 && progress.loaded >= progress.total);
+
+    // Throttle intermediate chunks to 125ms intervals to keep the browser UI responsive
+    if (!isDone && now - prev < 125) {
+      return;
     }
+    lastUpdate.set(file, now);
+
+    let loaded = progress.loaded ?? 0;
+    let total = progress.total ?? 0;
+
+    if (progress.status === 'done') {
+      total = Math.max(total, loaded, 1);
+      loaded = total;
+    }
+
+    post({
+      type: 'progress',
+      model,
+      file,
+      loaded,
+      total,
+    });
   };
 }
 
@@ -75,51 +103,63 @@ function bitmapToRawImage(bmp: ImageBitmap): InstanceType<typeof RawImage> {
   return new RawImage(imgData.data, w, h, 4);
 }
 
-// -- Model Loading ---------------------------------------------
+// -- Model Dtypes (Optimized Quantization to prevent massive downloads) --------
+// WebGPU: fp16 vision encoder + q4 text components (~340 MB total)
 const gpuDtype = {
   embed_tokens: 'fp16' as const,
   vision_encoder: 'fp16' as const,
   encoder_model: 'q4' as const,
   decoder_model_merged: 'q4' as const,
 };
+
+// WASM: all 4 components quantized to q8 (~262 MB total, saving 75% bandwidth over fp32!)
 const wasmDtype = {
-  embed_tokens: 'fp32' as const,
-  vision_encoder: 'fp32' as const,
+  embed_tokens: 'q8' as const,
+  vision_encoder: 'q8' as const,
   encoder_model: 'q8' as const,
   decoder_model_merged: 'q8' as const,
 };
 
+/** Load models sequentially rather than all-at-once to avoid network bandwidth saturation,
+ *  connection timeouts, and browser memory pressure during large ONNX fetches. */
 async function loadModels(targetDevice: 'webgpu' | 'wasm'): Promise<void> {
   const florenceProgress = makeProgress('florence');
   const depthProgress = makeProgress('depth');
 
-  const [mdl, proc, tok, pipe] = await Promise.all([
-    Florence2ForConditionalGeneration.from_pretrained(FLORENCE_MODEL, {
-      device: targetDevice,
-      dtype: targetDevice === 'webgpu' ? gpuDtype : wasmDtype,
-      progress_callback: florenceProgress,
-    }),
-    AutoProcessor.from_pretrained(FLORENCE_MODEL, {
-      progress_callback: florenceProgress,
-    }),
-    AutoTokenizer.from_pretrained(FLORENCE_MODEL, {
-      progress_callback: florenceProgress,
-    }),
-    pipeline('depth-estimation', DEPTH_MODEL, {
-      device: targetDevice,
-      progress_callback: depthProgress,
-    }),
-  ]);
+  // Step 1: Depth Anything v2 first (~26MB on WASM, ~47MB on WebGPU)
+  console.log(`[Vision Worker] (1/3) Loading Depth Anything v2 on ${targetDevice}...`);
+  depthPipe = await pipeline('depth-estimation', DEPTH_MODEL, {
+    device: targetDevice,
+    dtype: targetDevice === 'webgpu' ? 'fp16' : 'q8',
+    progress_callback: depthProgress,
+  });
+  console.log(`[Vision Worker] Depth Anything v2 loaded successfully.`);
 
-  florence = mdl;
-  processor = proc;
-  tokenizer = tok;
-  depthPipe = pipe;
+  // Step 2: Florence-2 Processor & Tokenizer (lightweight configuration, ~2 MB)
+  console.log(`[Vision Worker] (2/3) Loading Florence-2 processor & tokenizer...`);
+  processor = await AutoProcessor.from_pretrained(FLORENCE_MODEL, {
+    progress_callback: florenceProgress,
+  });
+  tokenizer = await AutoTokenizer.from_pretrained(FLORENCE_MODEL, {
+    progress_callback: florenceProgress,
+  });
+  console.log(`[Vision Worker] Florence-2 processor ready.`);
+
+  // Step 3: Florence-2 Model Weights (~260-340 MB)
+  console.log(`[Vision Worker] (3/3) Downloading Florence-2 conditional generation weights on ${targetDevice}...`);
+  florence = await Florence2ForConditionalGeneration.from_pretrained(FLORENCE_MODEL, {
+    device: targetDevice,
+    dtype: targetDevice === 'webgpu' ? gpuDtype : wasmDtype,
+    progress_callback: florenceProgress,
+  });
+
   device = targetDevice;
   post({ type: 'backend', device });
+  post({ type: 'ready' });
+  console.log(`[Vision Worker] All models successfully initialized on ${targetDevice}!`);
 }
 
-// -- Init (Fix 2: Real adapter check) --------------------------
+// -- Init (Fix 2: Real WebGPU adapter check + fallback) ---------
 async function init(forceWasm = false): Promise<void> {
   let targetDevice: 'webgpu' | 'wasm' = 'wasm';
 
@@ -145,6 +185,8 @@ async function init(forceWasm = false): Promise<void> {
       post({ type: 'backend', device: 'wasm' });
       await loadModels('wasm');
     } else {
+      console.error('[Vision Worker] Model loading error:', e);
+      post({ type: 'error', message: `Failed to download or initialize models: ${String(e)}` });
       throw e;
     }
   }
@@ -170,7 +212,7 @@ async function executeRun(runId: number, bitmap: ImageBitmap, isRetry = false): 
   }
 
   if (!florence || !processor || !depthPipe) {
-    post({ type: 'error', runId, message: 'Models not ready yet' });
+    post({ type: 'error', runId, message: 'Models are still loading. Please wait.' });
     bitmap.close();
     return;
   }
@@ -216,11 +258,8 @@ async function executeRun(runId: number, bitmap: ImageBitmap, isRetry = false): 
   } catch (e) {
     florenceFailed = true;
     console.warn('[Vision Worker] Florence caption stage error:', e);
-    // If WebGPU failed, attempt runtime fallback once
     if (device === 'webgpu' && !isRetry) {
       await fallbackToWasm();
-      // Re-create a fresh copy or retry
-      // (If image is intact we can retry with fallback)
     }
   }
   const t1 = performance.now();
@@ -316,7 +355,7 @@ async function executeRun(runId: number, bitmap: ImageBitmap, isRetry = false): 
   if (isStale(runId)) { cancelledRunIds.delete(runId); return; }
   post({ type: 'stage', runId, stage: 'depth', ms: Math.round(t3 - t2) });
 
-  // If Florence failed but depth succeeded, post a non-fatal warning (Fix 6)
+  // If Florence failed but depth succeeded, post a non-fatal warning
   if (florenceFailed) {
     post({
       type: 'error',
@@ -325,7 +364,7 @@ async function executeRun(runId: number, bitmap: ImageBitmap, isRetry = false): 
     });
   }
 
-  // -- Emit Result ï¿½ Zero-copy buffer transfer -------------------
+  // -- Emit Result — Zero-copy buffer transfer -------------------
   const resultMsg: WorkerOutMsg = {
     type: 'result',
     runId,
@@ -363,7 +402,7 @@ async function processQueue(initialRunId: number, initialBitmap: ImageBitmap): P
     }
   } finally {
     busy = false;
-    currentRunId = -1; // Reset run ID (Fix 1)
+    currentRunId = -1;
 
     // Drain any pending run that arrived at the boundary
     if (pendingRun !== null) {
@@ -398,6 +437,5 @@ self.addEventListener('message', (e: MessageEvent<WorkerInMsg>) => {
       pendingRun.bitmap.close();
       pendingRun = null;
     }
-    // cancel does NOT touch busy (Fix 1)
   }
 });

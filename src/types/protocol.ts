@@ -11,6 +11,7 @@ export type WorkerInMsg = InitMsg | AnalyzeMsg | CancelMsg;
 // -- Worker ? Main messages -----------------------------------
 export interface BackendMsg  { type: 'backend'; device: 'webgpu' | 'wasm' }
 export interface ProgressMsg { type: 'progress'; model: 'florence' | 'depth'; file: string; loaded: number; total: number }
+export interface ReadyMsg    { type: 'ready' }
 export interface StageMsg    { type: 'stage'; runId: number; stage: 'caption' | 'regions' | 'depth'; ms: number }
 export interface ResultMsg   {
   type: 'result';
@@ -21,7 +22,7 @@ export interface ResultMsg   {
   timings: { captionMs: number; regionsMs: number; depthMs: number };
 }
 export interface ErrorMsg { type: 'error'; runId?: number; message: string }
-export type WorkerOutMsg = BackendMsg | ProgressMsg | StageMsg | ResultMsg | ErrorMsg;
+export type WorkerOutMsg = BackendMsg | ProgressMsg | ReadyMsg | StageMsg | ResultMsg | ErrorMsg;
 
 // -- Shared domain types --------------------------------------
 export interface SceneObject {
